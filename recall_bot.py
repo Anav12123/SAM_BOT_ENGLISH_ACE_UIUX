@@ -33,10 +33,16 @@ class RecallBot:
             "recording_config": {
                 "transcript": {
                     "provider": {
-                        "gladia_v2_streaming": {
-                            "language_config": {
-                                "languages": ["en"]
-                            }
+                        "deepgram_streaming": {
+                            "language":    "en",
+                            "model":       "nova-3",
+                            "endpointing": 100,
+                            "keyterm": [
+                                "AnavClouds",
+                                "AnavClouds Software Solutions",
+                                "Salesforce",
+                                "Sam"
+                            ]
                         }
                     }
                 },
