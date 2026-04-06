@@ -706,7 +706,7 @@ class WebSocketServer:
                     [e["text"] for e in self.agent.rag._entries[-20:]]
                 )
             )
-            router_task = asyncio.create_task(self.agent._route(text))
+            router_task = asyncio.create_task(self.agent._route(text, context))
 
             print(f"[{ts()}] Trigger + Router in parallel...")
             should = await trigger_task
@@ -783,8 +783,7 @@ class WebSocketServer:
 
                 all_sentences: list[str] = []
 
-                # ── Get first sentence ──
-                first_item = None
+                # ── Drain ALL sentences from LLM ──
                 while True:
                     if self._interrupt_event.is_set() or my_gen != self._generation:
                         llm_task.cancel()
@@ -794,116 +793,48 @@ class WebSocketServer:
                     except asyncio.TimeoutError:
                         print(f"[{ts()}] ⚠️  LLM queue timeout")
                         break
-                    if item is None or item == "__FLUSH__":
-                        if item is None:
-                            break
+                    if item is None:
+                        break
+                    if item == "__FLUSH__":
                         continue
-                    first_item = item
-                    break
+                    all_sentences.append(item)
+                    print(f"[{ts()}] LLM sentence {len(all_sentences)} ({elapsed(t1)}): \"{item}\"")
 
-                if not first_item:
+                if not all_sentences:
                     llm_task.cancel()
                     return
 
-                all_sentences.append(first_item)
-                print(f"[{ts()}] LLM sentence 1 ({elapsed(t1)}): \"{first_item}\"")
+                print(f"[{ts()}] ⏱ LLM complete: {len(all_sentences)} sentence(s) ({elapsed(t1)})")
 
-                # ── TTS sentence 1 ──
-                try:
-                    audio_bytes = await self._tts(first_item)
-                    print(f"[{ts()}] ⏱ TTS sentence 1: {elapsed(t1)}")
-                except Exception as e:
-                    print(f"[{ts()}] ⚠️  TTS sentence 1 failed: {e}")
-                    llm_task.cancel()
-                    return
-
-                # ── Start background task: drain + TTS + COMBINE while sentence 1 plays ──
-                async def _prepare_remaining():
-                    """Drain queue, TTS all sentences, combine into one audio — all during playback."""
-                    texts = []
-                    pending_tts = []
-                    while True:
-                        try:
-                            item = await asyncio.wait_for(sentence_queue.get(), timeout=5.0)
-                        except asyncio.TimeoutError:
-                            break
-                        if item is None:
-                            break
-                        if item == "__FLUSH__":
-                            continue
-                        if self._interrupt_event.is_set() or my_gen != self._generation:
-                            break
-                        texts.append(item)
-                        pending_tts.append((item, asyncio.create_task(self._tts(item))))
-
-                    # Wait for all TTS and combine into single audio
-                    audio_parts = []
-                    for s, task in pending_tts:
-                        try:
-                            ab = await task
-                            audio_parts.append(ab)
-                        except Exception as e:
-                            print(f"[{ts()}] ⚠️  TTS failed for \"{s[:30]}\": {e}")
-
-                    if audio_parts:
-                        combined = self._combine_audio(audio_parts)
-                        combined_text = " ".join(texts)
-                        # Get actual duration before encoding
-                        from Speaker import get_duration_ms
-                        combined_dur_ms = get_duration_ms(combined)
-                        # Pre-encode base64 so inject is just a network call
-                        combined_b64 = base64.b64encode(combined).decode("utf-8")
-                        return texts, combined_b64, combined_text, combined_dur_ms
-                    return texts, None, None, 0
-
-                prepare_task = asyncio.create_task(_prepare_remaining())
-
-                # ── Inject sentence 1 + wait for playback ──
-                ok = await self._inject_and_wait(audio_bytes, first_item, "sentence-1", my_gen)
-                if ok:
-                    print(f"[{ts()}] 📊 FIRST AUDIO: {elapsed(t0)}")
-                    self._interrupt_event.clear()
-                else:
-                    self._log_sam(f"{first_item} [interrupted]")
-                    self.trigger.mark_responded()
-                    llm_task.cancel()
-                    prepare_task.cancel()
-                    return
-
-                # ── Sentence 1 done — inject pre-combined remaining audio instantly ──
-                try:
-                    remaining_text, combined_b64, combined_text, combined_dur_ms = await asyncio.wait_for(prepare_task, timeout=10.0)
-                except (asyncio.TimeoutError, asyncio.CancelledError):
-                    remaining_text, combined_b64, combined_text, combined_dur_ms = [], None, None, 0
-
-                if remaining_text:
-                    all_sentences.extend(remaining_text)
-                    for i, s in enumerate(remaining_text):
-                        print(f"[{ts()}] LLM sentence {i+2} ({elapsed(t1)}): \"{s}\"")
-
-                if combined_b64 and not self._interrupt_event.is_set() and my_gen == self._generation:
-                    # Inject directly — audio already combined + base64 encoded
-                    print(f"[{ts()}] 🔊 Injecting sentence-rest: \"{combined_text[:60]}\"")
-                    t_inj = time.time()
+                # ── TTS ALL sentences in parallel ──
+                tts_tasks = [(s, asyncio.create_task(self._tts(s))) for s in all_sentences]
+                audio_parts = []
+                for s, task in tts_tasks:
                     try:
-                        await self.speaker._inject_into_meeting(combined_b64)
-                        self._audio_playing = True
-                        print(f"[{ts()}] ⏱ Inject sentence-rest: {elapsed(t_inj)}")
-                        # Wait for playback — use actual audio duration
-                        play_dur = max(500, combined_dur_ms) if combined_dur_ms else max(500, len(combined_text.split()) * 300 + 200)
-                        try:
-                            await asyncio.wait_for(self._interrupt_event.wait(), timeout=play_dur / 1000)
-                            print(f"[{ts()}] ⚡ Interrupted during sentence-rest")
-                            self._audio_playing = False
-                            self._log_sam(f"{' '.join(all_sentences)} [interrupted]")
-                            self.trigger.mark_responded()
-                            return
-                        except asyncio.TimeoutError:
-                            pass
-                        self._audio_playing = False
+                        ab = await task
+                        audio_parts.append(ab)
                     except Exception as e:
-                        print(f"[{ts()}] ⚠️  Inject sentence-rest failed: {e}")
-                        self._audio_playing = False
+                        print(f"[{ts()}] ⚠️  TTS failed for \"{s[:30]}\": {e}")
+
+                if not audio_parts:
+                    return
+
+                print(f"[{ts()}] ⏱ TTS all done: {elapsed(t1)}")
+
+                # ── Combine into ONE MP3 + single inject ──
+                if len(audio_parts) == 1:
+                    final_audio = audio_parts[0]
+                else:
+                    final_audio = self._combine_audio(audio_parts)
+
+                from Speaker import get_duration_ms
+                total_dur_ms = get_duration_ms(final_audio)
+
+                if self._interrupt_event.is_set() or my_gen != self._generation:
+                    return
+
+                ok = await self._inject_and_wait(final_audio, ' '.join(all_sentences), "single-inject", my_gen)
+                print(f"[{ts()}] 📊 FIRST AUDIO: {elapsed(t0)}")
 
                 if all_sentences:
                     self._log_sam(' '.join(all_sentences))
