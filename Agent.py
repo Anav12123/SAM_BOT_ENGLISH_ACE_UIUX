@@ -26,6 +26,8 @@ DEBUG_PROMPTS_FILE = "debug_prompts.txt"
 
 def _debug_log(label: str, **kwargs):
     """Append a debug entry to debug_prompts.txt with timestamp and all variables."""
+    if os.environ.get("DEBUG_SAVE_AUDIO", "").lower() not in ("1", "true", "yes"):
+        return
     try:
         ts = time.strftime("%H:%M:%S")
         with open(DEBUG_PROMPTS_FILE, "a", encoding="utf-8") as f:
@@ -196,6 +198,8 @@ ROUTER_PROMPT = """Classify this message. Reply with ONLY one tag:
 IMPORTANT:
 - If the user asks WHO someone is (CEO, founder, manager), or asks about PRICES/RATES/COSTS — always [FT], even if they say "our company".
 - If the user asks about what THEY said earlier, what was discussed, or asks you to repeat — always [PM], this is conversation memory not web search.
+- If Sam ALREADY answered a similar question in the recent conversation, route to [PM] — no need to search again.
+- If the question is about Sam personally (who are you, what do you do, who do you work for) — always [PM], Sam knows his own identity.
 
 Examples:
 "Hi Sam, how are you?" → [PM]
@@ -212,6 +216,10 @@ Examples:
 "What did I just ask you?" → [PM]
 "Come again?" → [PM]
 "Describe yourself in three words" → [PM]
+"Whom do you work for?" → [PM]
+"Where do you work?" → [PM]
+"What do you do?" → [PM]
+"What's your role?" → [PM]
 
 ONLY reply with [PM] or [FT]. Nothing else."""
 
@@ -374,11 +382,11 @@ class PMAgent:
 
         full_context = "\n\n".join(parts)
 
-        # _debug_log("BUILD CONTEXT (system prompt appendix)",
-        #            user_text=user_text,
-        #            convo_history_raw=context or "(EMPTY)",
-        #            rag_results=rag_results or "(NONE)",
-        #            built_context=full_context)
+        _debug_log("BUILD CONTEXT (system prompt appendix)",
+                   user_text=user_text,
+                   convo_history_raw=context or "(EMPTY)",
+                   rag_results=rag_results or "(NONE)",
+                   built_context=full_context)
 
         return full_context
 
@@ -390,16 +398,24 @@ class PMAgent:
 
     # ── Fast Router — [PM] or [FT] classification ──────────────────────────
 
-    async def _route(self, user_text: str) -> str:
+    async def _route(self, user_text: str, context: str = "") -> str:
         """Ultra-fast classification: [PM] or [FT]. ~100-150ms on 8b."""
         import time as _t
         t0 = _t.time()
-        # _debug_log("ROUTER", user_text=user_text)
+        _debug_log("ROUTER", user_text=user_text)
+
+        # Add recent conversation so router can see what's been discussed
+        ctx_hint = ""
+        if context:
+            lines = [l for l in context.strip().split('\n') if l.strip()][-3:]
+            if lines:
+                ctx_hint = "\n\nRecent conversation:\n" + "\n".join(lines) + "\n\nNow classify the LATEST message only:"
+
         try:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": ROUTER_PROMPT},
+                    {"role": "system", "content": ROUTER_PROMPT + ctx_hint},
                     {"role": "user", "content": user_text},
                 ],
                 temperature=0.0,
@@ -434,11 +450,11 @@ class PMAgent:
             if lines:
                 context_block = "Recent conversation:\n" + "\n".join(lines) + "\n\n"
 
-        # _debug_log("EOT CHECK",
-        #            utterance=clean_text,
-        #            context_raw=context or "(EMPTY)",
-        #            context_block=context_block or "(EMPTY)",
-        #            full_prompt=EOT_PROMPT.format(text=clean_text, context_block=context_block))
+        _debug_log("EOT CHECK",
+                   utterance=clean_text,
+                   context_raw=context or "(EMPTY)",
+                   context_block=context_block or "(EMPTY)",
+                   full_prompt=EOT_PROMPT.format(text=clean_text, context_block=context_block))
 
         try:
             response = await asyncio.wait_for(
@@ -482,10 +498,10 @@ class PMAgent:
             recent = context.split("\n")[-3:]
             context_hint = "\nRecent conversation:\n" + "\n".join(recent)
 
-        # _debug_log("SEARCH QUERY CONVERSION",
-        #            user_text=clean,
-        #            context_hint=context_hint or "(EMPTY)",
-        #            full_system_prompt=SEARCH_QUERY_PROMPT + context_hint)
+        _debug_log("SEARCH QUERY CONVERSION",
+                   user_text=clean,
+                   context_hint=context_hint or "(EMPTY)",
+                   full_system_prompt=SEARCH_QUERY_PROMPT + context_hint)
         try:
             response = await self.client.chat.completions.create(
                 model=self.model,
@@ -513,13 +529,13 @@ class PMAgent:
         try:
             results = await self._get_web_search().search(search_query)
             if not results:
-                # _debug_log("SEARCH SUMMARY", search_query=search_query, results="(NONE)")
+                _debug_log("SEARCH SUMMARY", search_query=search_query, results="(NONE)")
                 return "Hmm, couldn't find that online right now."
             system = SEARCH_SUMMARY_PROMPT.format(search_results=results[:800])
-            # _debug_log("SEARCH SUMMARY",
-            #            search_query=search_query,
-            #            results_preview=results[:200],
-            #            user_text=user_text)
+            _debug_log("SEARCH SUMMARY",
+                       search_query=search_query,
+                       results_preview=results[:200],
+                       user_text=user_text)
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -552,7 +568,7 @@ class PMAgent:
             return await self._llm_call(user_text, system, max_tokens=25)
 
         # Fast route: [PM] or [FT]?
-        route = await self._route(user_text)
+        route = await self._route(user_text, context)
 
         if route == "FT":
             # Skip LLM entirely — go straight to search
@@ -598,12 +614,12 @@ class PMAgent:
         total_chars = len(system_prompt) + sum(len(m["content"]) for m in self.history)
         print(f"[Agent] ⏱ Context size: {total_chars} chars (~{total_chars//4} tokens)")
 
-        # _debug_log("PM STREAM",
-        #            user_text=user_text,
-        #            convo_history_raw=context or "(EMPTY)",
-        #            meeting_context=meeting_context or "(NONE)",
-        #            llm_history=[f"{m['role']}: {m['content'][:80]}" for m in self.history],
-        #            system_prompt_preview=system_prompt[-300:])
+        _debug_log("PM STREAM",
+                   user_text=user_text,
+                   convo_history_raw=context or "(EMPTY)",
+                   meeting_context=meeting_context or "(NONE)",
+                   llm_history=[f"{m['role']}: {m['content'][:80]}" for m in self.history],
+                   system_prompt_preview=system_prompt[-300:])
 
         try:
             t1 = _t.time()
