@@ -326,18 +326,17 @@ class WebSocketServer:
             speaker = payload.get("data", {}).get("data", {}).get("participant", {}).get("name", "Unknown")
             print(f"[{ts()}] 🎤 {speaker} started speaking")
 
-            # Interrupt detection: only when bot is audibly playing
-            if self._speaking and self._current_speaker != speaker:
-                if self._audio_playing:
-                    print(f"[{ts()}] ⚡ INTERRUPT (speech_on) — {speaker} cut in")
-                    await self.speaker.stop_audio()
-                    await asyncio.sleep(0.1)
-                    self._interrupt_event.set()
-                    if self._current_task and not self._current_task.done():
-                        self._current_task.cancel()
-                    self._speaking = False
-                    self._audio_playing = False
-                    self._was_interrupted = True
+            # Interrupt detection: when bot is audibly playing (skip bot's own events)
+            if self._speaking and self._audio_playing and speaker.lower() != "sam":
+                print(f"[{ts()}] ⚡ INTERRUPT (speech_on) — {speaker} cut in")
+                await self.speaker.stop_audio()
+                await asyncio.sleep(0.1)
+                self._interrupt_event.set()
+                if self._current_task and not self._current_task.done():
+                    self._current_task.cancel()
+                self._speaking = False
+                self._audio_playing = False
+                self._was_interrupted = True
 
         # ── Raw audio → VAD monitoring only (no flush decisions) ─────
         elif event == "audio_mixed_raw.data":
