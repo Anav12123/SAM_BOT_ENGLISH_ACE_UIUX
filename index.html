@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sam — AI Meeting Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg-primary: #0a0e17;
+  --bg-secondary: #111827;
+  --bg-card: #1a2235;
+  --bg-card-hover: #1f2a40;
+  --bg-input: #0d1321;
+  --border: #2a3550;
+  --border-focus: #3b82f6;
+  --text-primary: #e8ecf4;
+  --text-secondary: #8896b0;
+  --text-muted: #576785;
+  --accent: #3b82f6;
+  --accent-glow: rgba(59, 130, 246, 0.25);
+  --accent-hover: #2563eb;
+  --green: #10b981;
+  --green-glow: rgba(16, 185, 129, 0.2);
+  --red: #ef4444;
+  --red-glow: rgba(239, 68, 68, 0.15);
+  --red-hover: #dc2626;
+  --yellow: #f59e0b;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow: 0 4px 24px rgba(0,0,0,0.4);
+  --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+body {
+  font-family: 'DM Sans', system-ui, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ── Background effect ─────────────────────────────────────── */
+body::before {
+  content: '';
+  position: fixed;
+  top: -50%; left: -50%;
+  width: 200%; height: 200%;
+  background: radial-gradient(circle at 30% 20%, rgba(59,130,246,0.06) 0%, transparent 50%),
+              radial-gradient(circle at 70% 80%, rgba(16,185,129,0.04) 0%, transparent 50%);
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* ── Utility ───────────────────────────────────────────────── */
+.hidden { display: none !important; }
+
+/* ── Login page ────────────────────────────────────────────── */
+#login-page {
+  position: relative; z-index: 1;
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100vh; padding: 20px;
+}
+
+.login-container {
+  width: 100%; max-width: 420px;
+  animation: fadeSlideUp 0.6s ease-out;
+}
+
+.login-logo {
+  text-align: center; margin-bottom: 40px;
+}
+
+.login-logo .logo-icon {
+  width: 64px; height: 64px;
+  background: linear-gradient(135deg, var(--accent), #8b5cf6);
+  border-radius: 16px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 28px; margin-bottom: 16px;
+  box-shadow: 0 8px 32px rgba(59,130,246,0.3);
+}
+
+.login-logo h1 {
+  font-size: 28px; font-weight: 700;
+  letter-spacing: -0.5px;
+}
+
+.login-logo p {
+  color: var(--text-secondary); font-size: 14px; margin-top: 6px;
+}
+
+.login-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 32px;
+  box-shadow: var(--shadow);
+}
+
+.form-group { margin-bottom: 20px; }
+
+.form-group label {
+  display: block; font-size: 13px; font-weight: 600;
+  color: var(--text-secondary); margin-bottom: 8px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+
+.form-input {
+  width: 100%; padding: 12px 16px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: inherit; font-size: 15px;
+  transition: border-color var(--transition), box-shadow var(--transition);
+  outline: none;
+}
+
+.form-input:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.form-input::placeholder { color: var(--text-muted); }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 12px 24px;
+  border: none; border-radius: var(--radius-sm);
+  font-family: inherit; font-size: 15px; font-weight: 600;
+  cursor: pointer; transition: all var(--transition);
+  outline: none; text-decoration: none;
+}
+
+.btn-primary {
+  width: 100%;
+  background: var(--accent); color: #fff;
+  box-shadow: 0 4px 16px rgba(59,130,246,0.3);
+}
+.btn-primary:hover { background: var(--accent-hover); transform: translateY(-1px); }
+.btn-primary:active { transform: translateY(0); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+.btn-danger {
+  background: var(--red); color: #fff;
+  box-shadow: 0 4px 12px var(--red-glow);
+}
+.btn-danger:hover { background: var(--red-hover); }
+
+.btn-ghost {
+  background: transparent; color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+.btn-ghost:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+
+.login-error {
+  background: var(--red-glow);
+  border: 1px solid rgba(239,68,68,0.3);
+  color: var(--red);
+  padding: 10px 14px; border-radius: var(--radius-sm);
+  font-size: 13px; margin-bottom: 16px;
+  display: none;
+}
+.login-error.show { display: block; animation: shake 0.3s ease-out; }
+
+/* ── Dashboard ─────────────────────────────────────────────── */
+#dashboard-page {
+  position: relative; z-index: 1;
+  min-height: 100vh; padding: 0;
+}
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 32px;
+  background: rgba(17,24,39,0.8);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(12px);
+  position: sticky; top: 0; z-index: 10;
+}
+
+.topbar-left { display: flex; align-items: center; gap: 12px; }
+
+.topbar-logo {
+  width: 36px; height: 36px;
+  background: linear-gradient(135deg, var(--accent), #8b5cf6);
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px;
+}
+
+.topbar-title { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; }
+
+.topbar-right { display: flex; align-items: center; gap: 16px; }
+
+.topbar-user {
+  font-size: 13px; color: var(--text-secondary);
+  display: flex; align-items: center; gap: 6px;
+}
+
+.topbar-user .dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green-glow);
+}
+
+.btn-logout {
+  padding: 8px 16px; font-size: 13px;
+  background: transparent; color: var(--text-secondary);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  cursor: pointer; font-family: inherit; font-weight: 500;
+  transition: all var(--transition);
+}
+.btn-logout:hover { color: var(--red); border-color: var(--red); }
+
+.dashboard-content {
+  max-width: 720px; margin: 0 auto;
+  padding: 40px 24px;
+  animation: fadeSlideUp 0.5s ease-out;
+}
+
+/* ── Status card ───────────────────────────────────────────── */
+.status-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px 28px;
+  margin-bottom: 24px;
+  transition: border-color var(--transition);
+}
+.status-card.active { border-color: var(--green); }
+
+.status-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.status-indicator {
+  display: flex; align-items: center; gap: 10px;
+}
+
+.status-dot {
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--text-muted);
+  transition: all var(--transition);
+}
+.status-dot.active {
+  background: var(--green);
+  box-shadow: 0 0 12px var(--green-glow);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.status-label {
+  font-size: 16px; font-weight: 600;
+}
+
+.status-badge {
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.status-badge.idle {
+  background: rgba(87,103,133,0.15); color: var(--text-muted);
+}
+.status-badge.live {
+  background: var(--green-glow); color: var(--green);
+}
+
+.status-details {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+}
+
+.status-detail {
+  display: flex; flex-direction: column; gap: 4px;
+}
+
+.status-detail-label {
+  font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.8px; color: var(--text-muted); font-weight: 600;
+}
+
+.status-detail-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px; color: var(--text-secondary);
+  word-break: break-all;
+}
+
+/* ── Control card ──────────────────────────────────────────── */
+.control-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px;
+  margin-bottom: 24px;
+}
+
+.control-title {
+  font-size: 16px; font-weight: 600; margin-bottom: 20px;
+  display: flex; align-items: center; gap: 8px;
+}
+
+.meeting-input-group {
+  display: flex; gap: 12px;
+  margin-bottom: 16px;
+}
+
+.meeting-input {
+  flex: 1; padding: 12px 16px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.meeting-input:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.meeting-input::placeholder { color: var(--text-muted); font-family: 'DM Sans', sans-serif; }
+
+.btn-deploy {
+  padding: 12px 28px;
+  background: var(--accent); color: #fff;
+  border: none; border-radius: var(--radius-sm);
+  font-family: inherit; font-size: 14px; font-weight: 600;
+  cursor: pointer;
+  display: flex; align-items: center; gap: 8px;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+.btn-deploy:hover { background: var(--accent-hover); transform: translateY(-1px); }
+.btn-deploy:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+.btn-stop {
+  width: 100%; padding: 12px;
+  background: transparent; color: var(--red);
+  border: 1px solid rgba(239,68,68,0.3); border-radius: var(--radius-sm);
+  font-family: inherit; font-size: 14px; font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.btn-stop:hover { background: var(--red-glow); border-color: var(--red); }
+
+.control-msg {
+  margin-top: 12px; padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px; display: none;
+}
+.control-msg.success {
+  display: block; background: var(--green-glow);
+  border: 1px solid rgba(16,185,129,0.3); color: var(--green);
+}
+.control-msg.error {
+  display: block; background: var(--red-glow);
+  border: 1px solid rgba(239,68,68,0.3); color: var(--red);
+}
+
+/* ── Session history ───────────────────────────────────────── */
+.history-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px 28px;
+}
+
+.history-title {
+  font-size: 14px; font-weight: 600; color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: 0.5px;
+  margin-bottom: 16px;
+}
+
+.history-empty {
+  color: var(--text-muted); font-size: 14px;
+  text-align: center; padding: 20px 0;
+}
+
+.history-list { list-style: none; }
+
+.history-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(42,53,80,0.5);
+}
+.history-item:last-child { border-bottom: none; }
+
+.history-url {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px; color: var(--text-secondary);
+}
+
+.history-meta {
+  display: flex; gap: 12px;
+  font-size: 12px; color: var(--text-muted);
+}
+
+/* ── Loading spinner ───────────────────────────────────────── */
+.spinner {
+  width: 18px; height: 18px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+/* ── Animations ────────────────────────────────────────────── */
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-6px); }
+  75% { transform: translateX(6px); }
+}
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 12px var(--green-glow); }
+  50% { box-shadow: 0 0 20px var(--green-glow), 0 0 4px var(--green); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Responsive ────────────────────────────────────────────── */
+@media (max-width: 600px) {
+  .topbar { padding: 12px 16px; }
+  .dashboard-content { padding: 24px 16px; }
+  .meeting-input-group { flex-direction: column; }
+  .status-details { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- ════════ LOGIN PAGE ════════ -->
+<div id="login-page">
+  <div class="login-container">
+    <div class="login-logo">
+      <div class="logo-icon">🤖</div>
+      <h1>Sam</h1>
+      <p>AI Meeting Agent — Control Panel</p>
+    </div>
+    <div class="login-card">
+      <div id="login-error" class="login-error"></div>
+      <div class="form-group">
+        <label>Username</label>
+        <input type="text" id="login-user" class="form-input" placeholder="Enter username" autocomplete="username">
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="login-pass" class="form-input" placeholder="Enter password" autocomplete="current-password">
+      </div>
+      <button id="login-btn" class="btn btn-primary" onclick="doLogin()">
+        Sign In
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ DASHBOARD PAGE ════════ -->
+<div id="dashboard-page" class="hidden">
+
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="topbar-logo">🤖</div>
+      <span class="topbar-title">Sam Control Panel</span>
+    </div>
+    <div class="topbar-right">
+      <div class="topbar-user">
+        <span class="dot"></span>
+        <span id="display-user">admin</span>
+      </div>
+      <button class="btn-logout" onclick="doLogout()">Log out</button>
+    </div>
+  </div>
+
+  <div class="dashboard-content">
+
+    <!-- Status card -->
+    <div id="status-card" class="status-card">
+      <div class="status-header">
+        <div class="status-indicator">
+          <div id="status-dot" class="status-dot"></div>
+          <span id="status-label" class="status-label">Idle</span>
+        </div>
+        <span id="status-badge" class="status-badge idle">Standby</span>
+      </div>
+      <div id="status-details" class="status-details hidden">
+        <div class="status-detail">
+          <span class="status-detail-label">Bot ID</span>
+          <span id="detail-bot-id" class="status-detail-value">—</span>
+        </div>
+        <div class="status-detail">
+          <span class="status-detail-label">Uptime</span>
+          <span id="detail-uptime" class="status-detail-value">—</span>
+        </div>
+        <div class="status-detail">
+          <span class="status-detail-label">Meeting</span>
+          <span id="detail-meeting" class="status-detail-value" style="grid-column: span 2;">—</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Control card -->
+    <div class="control-card">
+      <div class="control-title">
+        <span>🎯</span> Deploy Sam to a Meeting
+      </div>
+      <div class="meeting-input-group">
+        <input type="url" id="meeting-url" class="meeting-input"
+               placeholder="https://meet.google.com/abc-defg-hij">
+        <button id="deploy-btn" class="btn-deploy" onclick="deploySam()">
+          🚀 Deploy
+        </button>
+      </div>
+      <button id="stop-btn" class="btn-stop hidden" onclick="stopSam()">
+        🛑 Remove Sam from Meeting
+      </button>
+      <div id="control-msg" class="control-msg"></div>
+    </div>
+
+    <!-- History -->
+    <div class="history-card">
+      <div class="history-title">📋 Session History</div>
+      <ul id="history-list" class="history-list">
+        <li class="history-empty">No sessions yet</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────
+const API = window.location.origin;
+let token = localStorage.getItem('sam_token');
+let username = localStorage.getItem('sam_user');
+let statusInterval = null;
+let sessions = JSON.parse(localStorage.getItem('sam_sessions') || '[]');
+
+// ── Init ─────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  if (token && username) {
+    showDashboard();
+  } else {
+    showLogin();
+  }
+
+  // Enter key on login
+  document.getElementById('login-pass').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doLogin();
+  });
+  document.getElementById('login-user').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('login-pass').focus();
+  });
+  document.getElementById('meeting-url').addEventListener('keydown', e => {
+    if (e.key === 'Enter') deploySam();
+  });
+});
+
+// ── Auth ─────────────────────────────────────────────────────
+async function doLogin() {
+  const user = document.getElementById('login-user').value.trim();
+  const pass = document.getElementById('login-pass').value;
+  const errEl = document.getElementById('login-error');
+  const btn = document.getElementById('login-btn');
+
+  if (!user || !pass) {
+    errEl.textContent = 'Please enter username and password';
+    errEl.classList.add('show');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Signing in...';
+  errEl.classList.remove('show');
+
+  try {
+    const res = await fetch(`${API}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: user, password: pass }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      errEl.textContent = data.error || 'Login failed';
+      errEl.classList.add('show');
+      return;
+    }
+
+    token = data.token;
+    username = data.username;
+    localStorage.setItem('sam_token', token);
+    localStorage.setItem('sam_user', username);
+    showDashboard();
+  } catch (e) {
+    errEl.textContent = 'Connection failed — is the server running?';
+    errEl.classList.add('show');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = 'Sign In';
+  }
+}
+
+function doLogout() {
+  token = null;
+  username = null;
+  localStorage.removeItem('sam_token');
+  localStorage.removeItem('sam_user');
+  showLogin();
+}
+
+// ── Navigation ───────────────────────────────────────────────
+function showLogin() {
+  document.getElementById('login-page').classList.remove('hidden');
+  document.getElementById('dashboard-page').classList.add('hidden');
+  if (statusInterval) clearInterval(statusInterval);
+}
+
+function showDashboard() {
+  document.getElementById('login-page').classList.add('hidden');
+  document.getElementById('dashboard-page').classList.remove('hidden');
+  document.getElementById('display-user').textContent = username;
+  renderHistory();
+  pollStatus();
+  statusInterval = setInterval(pollStatus, 5000);
+}
+
+// ── API helpers ──────────────────────────────────────────────
+async function apiCall(method, path, body = null) {
+  const opts = {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(`${API}${path}`, opts);
+
+  if (res.status === 401) {
+    doLogout();
+    return null;
+  }
+  return res.json();
+}
+
+// ── Status polling ───────────────────────────────────────────
+async function pollStatus() {
+  try {
+    const data = await apiCall('GET', '/status');
+    if (!data) return;
+    updateStatusUI(data);
+  } catch (e) {
+    // silent fail
+  }
+}
+
+function updateStatusUI(data) {
+  const dot = document.getElementById('status-dot');
+  const label = document.getElementById('status-label');
+  const badge = document.getElementById('status-badge');
+  const details = document.getElementById('status-details');
+  const card = document.getElementById('status-card');
+  const stopBtn = document.getElementById('stop-btn');
+
+  if (data.active) {
+    dot.classList.add('active');
+    label.textContent = 'Sam is Live';
+    badge.className = 'status-badge live';
+    badge.textContent = 'Live';
+    card.classList.add('active');
+    details.classList.remove('hidden');
+    stopBtn.classList.remove('hidden');
+
+    document.getElementById('detail-bot-id').textContent = data.bot_id || '—';
+    document.getElementById('detail-meeting').textContent = data.meeting_url || '—';
+
+    const secs = data.uptime_seconds || 0;
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    document.getElementById('detail-uptime').textContent = `${m}m ${s}s`;
+  } else {
+    dot.classList.remove('active');
+    label.textContent = 'Idle';
+    badge.className = 'status-badge idle';
+    badge.textContent = 'Standby';
+    card.classList.remove('active');
+    details.classList.add('hidden');
+    stopBtn.classList.add('hidden');
+  }
+}
+
+// ── Deploy / Stop ────────────────────────────────────────────
+async function deploySam() {
+  const urlInput = document.getElementById('meeting-url');
+  const btn = document.getElementById('deploy-btn');
+  const msg = document.getElementById('control-msg');
+  const url = urlInput.value.trim();
+
+  if (!url) {
+    showMsg(msg, 'Please enter a meeting URL', 'error');
+    return;
+  }
+
+  if (!url.includes('meet.google.com') && !url.includes('zoom.us') && !url.includes('teams.microsoft')) {
+    showMsg(msg, 'Enter a valid Google Meet, Zoom, or Teams URL', 'error');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Deploying...';
+  msg.style.display = 'none';
+
+  try {
+    const data = await apiCall('POST', '/start', { meeting_url: url });
+    if (!data) return;
+
+    if (data.error) {
+      showMsg(msg, data.error, 'error');
+      return;
+    }
+
+    showMsg(msg, `Sam joined! Bot ID: ${data.bot_id}`, 'success');
+
+    // Add to history
+    sessions.unshift({
+      url: url.replace('https://', ''),
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      date: new Date().toLocaleDateString(),
+    });
+    if (sessions.length > 20) sessions = sessions.slice(0, 20);
+    localStorage.setItem('sam_sessions', JSON.stringify(sessions));
+    renderHistory();
+
+    pollStatus();
+    urlInput.value = '';
+  } catch (e) {
+    showMsg(msg, 'Failed to connect — check server', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '🚀 Deploy';
+  }
+}
+
+async function stopSam() {
+  const msg = document.getElementById('control-msg');
+  const stopBtn = document.getElementById('stop-btn');
+  stopBtn.disabled = true;
+  stopBtn.textContent = 'Removing...';
+
+  try {
+    const data = await apiCall('POST', '/stop');
+    if (!data) return;
+    showMsg(msg, 'Sam has left the meeting', 'success');
+    pollStatus();
+  } catch (e) {
+    showMsg(msg, 'Failed to stop bot', 'error');
+  } finally {
+    stopBtn.disabled = false;
+    stopBtn.textContent = '🛑 Remove Sam from Meeting';
+  }
+}
+
+// ── History ──────────────────────────────────────────────────
+function renderHistory() {
+  const list = document.getElementById('history-list');
+  if (!sessions.length) {
+    list.innerHTML = '<li class="history-empty">No sessions yet</li>';
+    return;
+  }
+  list.innerHTML = sessions.map(s => `
+    <li class="history-item">
+      <span class="history-url">${s.url}</span>
+      <div class="history-meta">
+        <span>${s.time}</span>
+        <span>${s.date || ''}</span>
+      </div>
+    </li>
+  `).join('');
+}
+
+// ── Helpers ──────────────────────────────────────────────────
+function showMsg(el, text, type) {
+  el.textContent = text;
+  el.className = `control-msg ${type}`;
+  el.style.display = 'block';
+  setTimeout(() => { el.style.display = 'none'; }, 8000);
+}
+</script>
+
+</body>
+</html>
