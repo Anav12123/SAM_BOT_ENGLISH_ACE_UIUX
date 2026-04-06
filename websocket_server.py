@@ -114,7 +114,7 @@ class WebSocketServer:
         # VAD — kept for audio monitoring and interrupt detection only
         self._vad = RmsVAD()
         # Debug: save raw audio to file for analysis
-        self.DEBUG_SAVE_AUDIO = True
+        self.DEBUG_SAVE_AUDIO = os.environ.get("DEBUG_SAVE_AUDIO", "").lower() in ("1", "true", "yes")
         self._debug_audio_file = None
 
         self.app = web.Application()
@@ -552,7 +552,7 @@ class WebSocketServer:
             seg = AudioSegment.from_file(io.BytesIO(audio_bytes), format="mp3")
             combined += seg
         output = io.BytesIO()
-        combined.export(output, format="mp3", bitrate="64k")
+        combined.export(output, format="mp3", bitrate="192k")
         return output.getvalue()
 
     async def _inject_and_wait(self, audio_bytes: bytes, text: str, label: str, my_gen: int, stop_first: bool = True) -> bool:
@@ -573,7 +573,9 @@ class WebSocketServer:
             self._audio_playing = True
             print(f"[{ts()}] ⏱ Inject {label}: {elapsed(t_inj)}")
 
-            play_dur = max(500, len(text.split()) * 350 + 300)
+            # Calculate actual audio duration instead of guessing
+            from Speaker import get_duration_ms
+            play_dur = max(500, get_duration_ms(audio_bytes))
             try:
                 await asyncio.wait_for(self._interrupt_event.wait(), timeout=play_dur / 1000)
                 print(f"[{ts()}] ⚡ Interrupted during {label}")
@@ -845,10 +847,13 @@ class WebSocketServer:
                     if audio_parts:
                         combined = self._combine_audio(audio_parts)
                         combined_text = " ".join(texts)
+                        # Get actual duration before encoding
+                        from Speaker import get_duration_ms
+                        combined_dur_ms = get_duration_ms(combined)
                         # Pre-encode base64 so inject is just a network call
                         combined_b64 = base64.b64encode(combined).decode("utf-8")
-                        return texts, combined_b64, combined_text
-                    return texts, None, None
+                        return texts, combined_b64, combined_text, combined_dur_ms
+                    return texts, None, None, 0
 
                 prepare_task = asyncio.create_task(_prepare_remaining())
 
@@ -866,9 +871,9 @@ class WebSocketServer:
 
                 # ── Sentence 1 done — inject pre-combined remaining audio instantly ──
                 try:
-                    remaining_text, combined_b64, combined_text = await asyncio.wait_for(prepare_task, timeout=10.0)
+                    remaining_text, combined_b64, combined_text, combined_dur_ms = await asyncio.wait_for(prepare_task, timeout=10.0)
                 except (asyncio.TimeoutError, asyncio.CancelledError):
-                    remaining_text, combined_b64, combined_text = [], None, None
+                    remaining_text, combined_b64, combined_text, combined_dur_ms = [], None, None, 0
 
                 if remaining_text:
                     all_sentences.extend(remaining_text)
@@ -883,8 +888,8 @@ class WebSocketServer:
                         await self.speaker._inject_into_meeting(combined_b64)
                         self._audio_playing = True
                         print(f"[{ts()}] ⏱ Inject sentence-rest: {elapsed(t_inj)}")
-                        # Wait for playback
-                        play_dur = max(500, len(combined_text.split()) * 350 + 300)
+                        # Wait for playback — use actual audio duration
+                        play_dur = max(500, combined_dur_ms) if combined_dur_ms else max(500, len(combined_text.split()) * 300 + 200)
                         try:
                             await asyncio.wait_for(self._interrupt_event.wait(), timeout=play_dur / 1000)
                             print(f"[{ts()}] ⚡ Interrupted during sentence-rest")
@@ -927,13 +932,14 @@ class WebSocketServer:
         await self.speaker.warmup()
         await self._vad.setup()
 
-        # Clear debug file for fresh run
-        try:
-            with open("debug_prompts.txt", "w", encoding="utf-8") as f:
-                f.write(f"=== Debug session started at {ts()} ===\n")
-            print(f"[{ts()}] 📝 Debug logging to debug_prompts.txt")
-        except Exception:
-            pass
+        # Clear debug file for fresh run (only if debug enabled)
+        if os.environ.get("DEBUG_SAVE_AUDIO", "").lower() in ("1", "true", "yes"):
+            try:
+                with open("debug_prompts.txt", "w", encoding="utf-8") as f:
+                    f.write(f"=== Debug session started at {ts()} ===\n")
+                print(f"[{ts()}] 📝 Debug logging to debug_prompts.txt")
+            except Exception:
+                pass
 
         # Pre-bake interrupt ack audio for instant playback
         print(f"[{ts()}] Pre-baking interrupt ack audio...")
