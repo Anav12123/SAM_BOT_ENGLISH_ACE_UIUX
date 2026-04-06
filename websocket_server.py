@@ -100,6 +100,7 @@ class WebSocketServer:
 
         # Interrupt handling — pre-baked ack audio for instant playback
         self._was_interrupted: bool = False
+        self._playing_ack: bool = False
         self._interrupt_ack_audio: list[tuple[str, bytes]] = []
 
         # EOT check task — the ONLY path to processing
@@ -112,7 +113,7 @@ class WebSocketServer:
         # TTS rate limiter — matches number of Cartesia keys
         self._tts_semaphore = asyncio.Semaphore(4)
 
-        # VAD — kept for audio monitoring and interrupt detection only
+        # VAD — kept for audio monitoring only
         self._vad = RmsVAD()
         # Debug: save raw audio to file for analysis
         self.DEBUG_SAVE_AUDIO = os.environ.get("DEBUG_SAVE_AUDIO", "").lower() in ("1", "true", "yes")
@@ -222,14 +223,12 @@ class WebSocketServer:
                     return
 
             # ── Different speaker while Sam is processing/speaking ──────
-            if self._speaking and self._current_speaker != speaker:
+            if self._speaking and not self._playing_ack and self._current_speaker != speaker:
                 if self._audio_playing:
                     print(f"[{ts()}] ⚡ INTERRUPT — {speaker} cut in (audio playing)")
-                    await self.speaker.stop_audio()
                     self._interrupt_event.set()
                     if self._current_task and not self._current_task.done():
                         self._current_task.cancel()
-                    await asyncio.sleep(0.1)
                     self._speaking = False
                     self._audio_playing = False
                     self._searching = False
@@ -237,6 +236,7 @@ class WebSocketServer:
                     self._partial_text = ""
                     self._partial_speaker = ""
                     self._vad.end_turn()
+                    # Ack inject will REPLACE current audio on Recall.ai
                     await self._play_interrupt_ack()
                     return
                 else:
@@ -253,14 +253,12 @@ class WebSocketServer:
                     return
 
             # ── Same speaker adds more while Sam is processing/speaking ──
-            if self._speaking and self._current_speaker == speaker:
+            if self._speaking and not self._playing_ack and self._current_speaker == speaker:
                 if self._audio_playing:
                     print(f"[{ts()}] ⚡ INTERRUPT — {speaker} cut in (same speaker, audio playing)")
                     if self._current_task and not self._current_task.done():
                         self._current_task.cancel()
-                    await self.speaker.stop_audio()
                     self._interrupt_event.set()
-                    await asyncio.sleep(0.1)
                     self._speaking = False
                     self._audio_playing = False
                     self._searching = False
@@ -268,6 +266,7 @@ class WebSocketServer:
                     self._partial_text = ""
                     self._partial_speaker = ""
                     self._vad.end_turn()
+                    # Ack inject will REPLACE current audio on Recall.ai
                     await self._play_interrupt_ack()
                     return
                 else:
@@ -326,19 +325,7 @@ class WebSocketServer:
             speaker = payload.get("data", {}).get("data", {}).get("participant", {}).get("name", "Unknown")
             print(f"[{ts()}] 🎤 {speaker} started speaking")
 
-            # Interrupt detection: when bot is audibly playing (skip bot's own events)
-            if self._speaking and self._audio_playing and speaker.lower() != "sam":
-                print(f"[{ts()}] ⚡ INTERRUPT (speech_on) — {speaker} cut in")
-                await self.speaker.stop_audio()
-                await asyncio.sleep(0.1)
-                self._interrupt_event.set()
-                if self._current_task and not self._current_task.done():
-                    self._current_task.cancel()
-                self._speaking = False
-                self._audio_playing = False
-                self._was_interrupted = True
-
-        # ── Raw audio → VAD monitoring only (no flush decisions) ─────
+        # ── Raw audio → VAD monitoring only ──────────────────────────
         elif event == "audio_mixed_raw.data":
             if not self._vad.ready or self._audio_playing:
                 return
@@ -611,15 +598,22 @@ class WebSocketServer:
         self._interrupt_event.clear()
         self._generation += 1
         self._speaking = True
+        self._playing_ack = True
         try:
             text, audio = random.choice(self._interrupt_ack_audio)
             print(f"[{ts()}] 🙏 Interrupt ack (instant): \"{text}\"")
-            await self._inject_and_wait(audio, text, "interrupt-ack", self._generation)
+            # Step 1: Stop Sam's speech
+            await self.speaker.stop_audio()
+            # Step 2: Wait for Recall.ai to actually stop the audio on Google Meet
+            await asyncio.sleep(1.0)
+            # Step 3: Now inject the ack into silence
+            await self._inject_and_wait(audio, text, "interrupt-ack", self._generation, stop_first=False)
         except Exception as e:
             print(f"[{ts()}] ⚠️  Interrupt ack error: {e}")
         finally:
             self._speaking = False
             self._audio_playing = False
+            self._playing_ack = False
 
     # ══════════════════════════════════════════════════════════════════════════
     # Background search + TTS preparation
