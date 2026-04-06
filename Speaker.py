@@ -260,6 +260,73 @@ RECALL_REGION   = os.environ.get("RECALLAI_REGION", "ap-northeast-1")
 RECALL_API_BASE = f"https://{RECALL_REGION}.recall.ai/api/v1"
 
 
+# ── Number-to-words for natural TTS pronunciation ────────────────────────────
+
+def _number_to_words(n: int) -> str:
+    """Convert integer to English words. Handles 0 to 999,999,999."""
+    if n == 0:
+        return "zero"
+    if n < 0:
+        return "minus " + _number_to_words(-n)
+
+    ones = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+            "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+            "seventeen", "eighteen", "nineteen"]
+    tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+
+    def _chunk(num):
+        if num == 0:
+            return ""
+        if num < 20:
+            return ones[num]
+        if num < 100:
+            return tens[num // 10] + (" " + ones[num % 10] if num % 10 else "")
+        return ones[num // 100] + " hundred" + (" " + _chunk(num % 100) if num % 100 else "")
+
+    parts = []
+    if n >= 1_000_000:
+        parts.append(_chunk(n // 1_000_000) + " million")
+        n %= 1_000_000
+    if n >= 1_000:
+        parts.append(_chunk(n // 1_000) + " thousand")
+        n %= 1_000
+    if n > 0:
+        parts.append(_chunk(n))
+    return " ".join(parts)
+
+
+def _prep_for_tts(text: str) -> str:
+    """Convert numbers to spoken words for natural TTS output."""
+    import re
+
+    # $1,234 → one thousand two hundred thirty four dollars
+    def _currency(m):
+        try:
+            return _number_to_words(int(m.group(1).replace(",", ""))) + " dollars"
+        except ValueError:
+            return m.group(0)
+    text = re.sub(r'\$([0-9,]+)', _currency, text)
+
+    # 50% → fifty percent
+    def _pct(m):
+        try:
+            return _number_to_words(int(m.group(1))) + " percent"
+        except ValueError:
+            return m.group(0)
+    text = re.sub(r'(\d+)%', _pct, text)
+
+    # Standalone numbers: 51 → fifty one (not inside words)
+    def _num(m):
+        try:
+            n = int(m.group(0))
+            return _number_to_words(n) if n <= 999_999_999 else m.group(0)
+        except ValueError:
+            return m.group(0)
+    text = re.sub(r'\b\d{1,9}\b', _num, text)
+
+    return text
+
+
 class CartesiaSpeaker:
     def __init__(self, bot_id: str = None):
         import Speaker as _self_module
@@ -350,6 +417,7 @@ class CartesiaSpeaker:
         }
 
     async def _synthesise(self, text: str) -> bytes:
+        text = _prep_for_tts(text)
         headers = self._next_cartesia_headers()
         key_num = (self._key_index - 1) % len(self._cartesia_keys) + 1
         print(f"[Speaker] TTS via Cartesia (key #{key_num})...")
