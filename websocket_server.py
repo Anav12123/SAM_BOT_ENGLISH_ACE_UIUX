@@ -606,7 +606,7 @@ class WebSocketServer:
             print(f"[{ts()}] 🙏 Interrupt ack (instant): \"{text}\"")
             # stop_audio already called by interrupt handler
             # Wait for Recall.ai to fully clear audio from Google Meet
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.3)
             # Now inject the ack into silence
             await self._inject_and_wait(audio, text, "interrupt-ack", self._generation, stop_first=False)
         except Exception as e:
