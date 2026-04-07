@@ -226,6 +226,8 @@ class WebSocketServer:
             if self._speaking and not self._playing_ack and self._current_speaker != speaker:
                 if self._audio_playing:
                     print(f"[{ts()}] ⚡ INTERRUPT — {speaker} cut in (audio playing)")
+                    # IMMEDIATELY stop audio — first priority
+                    await self.speaker.stop_audio()
                     self._interrupt_event.set()
                     if self._current_task and not self._current_task.done():
                         self._current_task.cancel()
@@ -236,7 +238,6 @@ class WebSocketServer:
                     self._partial_text = ""
                     self._partial_speaker = ""
                     self._vad.end_turn()
-                    # Ack inject will REPLACE current audio on Recall.ai
                     await self._play_interrupt_ack()
                     return
                 else:
@@ -256,6 +257,8 @@ class WebSocketServer:
             if self._speaking and not self._playing_ack and self._current_speaker == speaker:
                 if self._audio_playing:
                     print(f"[{ts()}] ⚡ INTERRUPT — {speaker} cut in (same speaker, audio playing)")
+                    # IMMEDIATELY stop audio — first priority
+                    await self.speaker.stop_audio()
                     if self._current_task and not self._current_task.done():
                         self._current_task.cancel()
                     self._interrupt_event.set()
@@ -266,7 +269,6 @@ class WebSocketServer:
                     self._partial_text = ""
                     self._partial_speaker = ""
                     self._vad.end_turn()
-                    # Ack inject will REPLACE current audio on Recall.ai
                     await self._play_interrupt_ack()
                     return
                 else:
@@ -602,11 +604,10 @@ class WebSocketServer:
         try:
             text, audio = random.choice(self._interrupt_ack_audio)
             print(f"[{ts()}] 🙏 Interrupt ack (instant): \"{text}\"")
-            # Step 1: Stop Sam's speech
-            await self.speaker.stop_audio()
-            # Step 2: Wait for Recall.ai to actually stop the audio on Google Meet
+            # stop_audio already called by interrupt handler
+            # Wait for Recall.ai to fully clear audio from Google Meet
             await asyncio.sleep(1.0)
-            # Step 3: Now inject the ack into silence
+            # Now inject the ack into silence
             await self._inject_and_wait(audio, text, "interrupt-ack", self._generation, stop_first=False)
         except Exception as e:
             print(f"[{ts()}] ⚠️  Interrupt ack error: {e}")
